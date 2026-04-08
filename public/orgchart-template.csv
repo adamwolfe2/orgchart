@@ -1,0 +1,4 @@
+first_name,last_name,email,position,supervisor_email,context
+Jane,Smith,jane@acme.com,CEO,,Founder and CEO. Owns vision and fundraising.
+John,Doe,john@acme.com,VP Engineering,jane@acme.com,Leads engineering. Owns platform and infrastructure decisions.
+Sarah,Lee,sarah@acme.com,Senior Engineer,john@acme.com,Owns frontend platform and design system.
