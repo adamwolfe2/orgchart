@@ -37,7 +37,7 @@ export function Logo({
       )}
     >
       <Image
-        src="/logo-mark.svg"
+        src="/logo-mark.png"
         alt="OrgChart"
         width={px}
         height={px}
