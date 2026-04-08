@@ -54,10 +54,10 @@ create table employees (
   slack_user_id text,
   claimed_by_user_id uuid references auth.users on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (organization_id, lower(email))
+  updated_at timestamptz not null default now()
 );
 
+create unique index employees_org_email_key on employees (organization_id, lower(email));
 create index employees_org_idx on employees(organization_id);
 create index employees_supervisor_idx on employees(organization_id, lower(supervisor_email));
 create index employees_claimed_idx on employees(claimed_by_user_id);
