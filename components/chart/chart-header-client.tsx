@@ -27,7 +27,7 @@ export function ChartHeaderClient({
 
   return (
     <>
-      <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+      <header className="relative z-10 flex h-14 items-center justify-between border-b border-slate-100 bg-white px-6">
         <div className="flex items-center gap-4">
           <Logo size="sm" showWordmark={false} href="/chart" />
           <div className="h-6 w-px bg-slate-200" aria-hidden="true" />

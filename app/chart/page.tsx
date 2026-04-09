@@ -60,7 +60,8 @@ export default async function ChartPage() {
     auth.membership.role === 'owner' || auth.membership.role === 'admin'
 
   return (
-    <main className="min-h-screen bg-white">
+    /* Full-screen layout: header is fixed at h-14, canvas fills the rest */
+    <main className="h-screen overflow-hidden bg-slate-50">
       <ChartHeaderClient
         organizationName={organization.name}
         isAdmin={isAdmin}
@@ -68,7 +69,7 @@ export default async function ChartPage() {
       />
 
       {roots.length === 0 ? (
-        <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+        <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-base text-slate-600">
             No employees yet. Upload a CSV to get started.
           </p>

@@ -51,11 +51,12 @@ export function resolveLogoUrl(
 }
 
 /**
- * Scrape a website with Firecrawl and return screenshot URL + metadata.
+ * Scrape a website with Firecrawl and return screenshot URL, raw HTML, + metadata.
  * Throws on network errors. Caller handles fallback.
  */
 async function scrape(url: string): Promise<{
   screenshotUrl: string | null
+  html: string
   metadata: Record<string, unknown>
 }> {
   const apiKey = process.env.FIRECRAWL_API_KEY
@@ -71,7 +72,7 @@ async function scrape(url: string): Promise<{
     },
     body: JSON.stringify({
       url,
-      formats: ['screenshot'],
+      formats: ['screenshot', 'html'],
       onlyMainContent: false,
     }),
   })
@@ -84,6 +85,7 @@ async function scrape(url: string): Promise<{
     success: boolean
     data?: {
       screenshot?: string
+      html?: string
       metadata?: Record<string, unknown>
     }
     error?: string
@@ -95,8 +97,43 @@ async function scrape(url: string): Promise<{
 
   return {
     screenshotUrl: json.data.screenshot ?? null,
+    html: json.data.html ?? '',
     metadata: json.data.metadata ?? {},
   }
+}
+
+/**
+ * Try to extract the actual logo URL from HTML.
+ * Looks for common logo patterns before falling back to OG image.
+ */
+function extractLogoFromHtml(html: string, baseUrl: string): string | null {
+  if (!html) return null
+
+  // Patterns ordered by specificity
+  const patterns: RegExp[] = [
+    // <img ... class/id containing "logo" ...>
+    /<img[^>]+(?:class|id)=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
+    /<img[^>]+src=["']([^"']+)["'][^>]+(?:class|id)=["'][^"']*logo[^"']*["']/gi,
+    // <img alt="logo" or alt contains org name>
+    /<img[^>]+alt=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
+    /<img[^>]+src=["']([^"']+)["'][^>]+alt=["'][^"']*logo[^"']*["']/gi,
+    // SVG href patterns (linked logos)
+    /<use[^>]+href=["']([^"']+\.svg[^"']*)["']/gi,
+  ]
+
+  const base = baseUrl.replace(/\/+$/, '')
+
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0
+    const match = pattern.exec(html)
+    if (match?.[1]) {
+      const src = match[1]
+      if (src.startsWith('http')) return src
+      if (src.startsWith('//')) return `https:${src}`
+      if (src.startsWith('/')) return `${base}${src}`
+    }
+  }
+  return null
 }
 
 /**
@@ -145,9 +182,10 @@ export async function extractBrand(websiteUrl: string): Promise<BrandExtractionR
   }
 
   try {
-    const { screenshotUrl, metadata } = await scrape(websiteUrl)
+    const { screenshotUrl, html, metadata } = await scrape(websiteUrl)
 
-    const logoUrl = resolveLogoUrl(metadata, websiteUrl)
+    // Prefer an actual <img class="logo"> from HTML; fall back to OG image / favicon
+    const logoUrl = extractLogoFromHtml(html, websiteUrl) ?? resolveLogoUrl(metadata, websiteUrl)
 
     // If no screenshot was returned, we can't extract colors visually
     if (!screenshotUrl) {
