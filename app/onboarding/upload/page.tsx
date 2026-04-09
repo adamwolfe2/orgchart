@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 
 import { Logo } from '@/components/brand/logo'
+import { FallingPattern } from '@/components/ui/falling-pattern'
 import { createClient } from '@/lib/supabase/server'
 import { UploadForm } from './upload-form'
 
@@ -35,7 +36,18 @@ export default async function OnboardingUploadPage() {
   }
 
   return (
-    <main className="min-h-screen bg-white">
+    <main className="relative isolate min-h-screen bg-white">
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+      >
+        <FallingPattern
+          className="h-full w-full opacity-50 [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]"
+          density={3}
+          duration={400}
+          blurIntensity="1.5em"
+        />
+      </div>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
         <Logo size="md" />
       </header>

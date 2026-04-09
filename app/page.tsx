@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { Logo } from '@/components/brand/logo'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FallingPattern } from '@/components/ui/falling-pattern'
 
 const CSV_SAMPLE = `first_name,last_name,email,position,supervisor_email
 Jane,Smith,jane@acme.com,CEO,
@@ -22,7 +23,17 @@ export default function LandingPage() {
         </Link>
       </header>
 
-      <section className="mx-auto w-full max-w-4xl px-6 pt-16 pb-20 text-center">
+      <section className="relative isolate mx-auto w-full max-w-4xl px-6 pt-16 pb-20 text-center">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+        >
+          <FallingPattern
+            className="h-full w-full [mask-image:radial-gradient(ellipse_60%_50%_at_center,black,transparent)]"
+            density={2}
+            duration={300}
+          />
+        </div>
         <div className="flex justify-center">
           <Badge variant="outline">Free during beta</Badge>
         </div>
