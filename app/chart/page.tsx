@@ -47,6 +47,15 @@ export default async function ChartPage() {
   }
   flattenRoots(roots)
 
+  // Check whether the current user has a claimed employee record
+  const { data: claimedEmployee } = await supabase
+    .from('employees')
+    .select('id')
+    .eq('claimed_by_user_id', auth.user.id)
+    .maybeSingle()
+
+  const hasClaimedEmployee = Boolean(claimedEmployee)
+
   return (
     <main className="min-h-screen bg-white">
       <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
@@ -57,11 +66,20 @@ export default async function ChartPage() {
             {organization.name}
           </h1>
         </div>
-        <form action="/auth/signout" method="post">
-          <Button type="submit" variant="ghost" size="sm">
-            Sign out
-          </Button>
-        </form>
+        <div className="flex items-center gap-2">
+          {hasClaimedEmployee ? (
+            <Link href="/profile">
+              <Button variant="ghost" size="sm">
+                My profile
+              </Button>
+            </Link>
+          ) : null}
+          <form action="/auth/signout" method="post">
+            <Button type="submit" variant="ghost" size="sm">
+              Sign out
+            </Button>
+          </form>
+        </div>
       </header>
 
       {roots.length === 0 ? (
