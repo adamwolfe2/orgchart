@@ -1,19 +1,17 @@
-import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseEmployeeCsv, type CsvIssue, type HeaderMapping } from '@/lib/csv'
-import { embedTexts, employeeSourceText } from '@/lib/embeddings'
 import type { ApiResponse } from '@/lib/types'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024 // 5MB
 
-interface UploadResultData {
+interface UploadStagedData {
+  staging_id: string
   count: number
   headerMappings: HeaderMapping[]
   warnings: CsvIssue[]
   unmappedHeaders: string[]
-  upload_batch_id: string
 }
 
 interface UploadValidationError extends ApiResponse<never> {
@@ -28,12 +26,15 @@ interface UploadValidationError extends ApiResponse<never> {
  * POST /api/employees/upload
  *
  * Accepts a multipart/form-data body with a `file` field (CSV).
- * Parses + validates the CSV, upserts employees via the service-role client
- * (RLS would otherwise require many round-trips), then best-effort generates
- * embeddings for chat/RAG.
+ * Parses + validates the CSV and writes the result to the
+ * `employee_upload_stagings` table so the user can preview it
+ * before committing. Returns `{ staging_id }` on success.
  *
- * Embedding failures do not fail the upload — chat is a Phase 3 feature and
- * is optional for MVP. We log the error and return success regardless.
+ * Does NOT write to the employees table — that happens on
+ * POST /api/employees/upload/commit.
+ *
+ * Sweeps expired staging rows for the caller's org as a side effect
+ * so the table doesn't grow unbounded.
  */
 export async function POST(request: Request) {
   try {
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const { membership } = auth
+    const { membership, user } = auth
     if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: 'forbidden' },
@@ -82,7 +83,6 @@ export async function POST(request: Request) {
     const csvText = await fileField.text()
     const result = parseEmployeeCsv(csvText)
 
-    // Hard errors block the upload: missing required headers, no parseable rows.
     if (result.errors.length > 0) {
       return NextResponse.json<UploadValidationError>(
         {
@@ -113,71 +113,47 @@ export async function POST(request: Request) {
     }
 
     const organizationId = membership.organization_id
-    const uploadBatchId = randomUUID()
-
-    const employeeRows = result.rows.map((row) => ({
-      organization_id: organizationId,
-      first_name: row.first_name,
-      last_name: row.last_name,
-      email: row.email,
-      position: row.position || null,
-      supervisor_email: row.supervisor_email || null,
-      context: row.context || null,
-      upload_batch_id: uploadBatchId,
-    }))
-
     const admin = createAdminClient()
 
-    const { data: upserted, error: upsertError } = await admin
-      .from('employees')
-      .upsert(employeeRows, {
-        onConflict: 'organization_id,email',
-        ignoreDuplicates: false,
-      })
-      .select('id, first_name, last_name, position, context')
+    // Opportunistic sweep: delete any expired staging rows for this org
+    // so the table doesn't accumulate. Cheap query, hits the
+    // expires_at index.
+    await admin
+      .from('employee_upload_stagings')
+      .delete()
+      .eq('organization_id', organizationId)
+      .lt('expires_at', new Date().toISOString())
 
-    if (upsertError) {
-      console.error('Failed to upsert employees:', upsertError)
+    const { data: inserted, error: stagingError } = await admin
+      .from('employee_upload_stagings')
+      .insert({
+        organization_id: organizationId,
+        created_by: user.id,
+        parsed_rows: result.rows,
+        warnings: result.warnings,
+        header_mappings: result.headerMappings,
+        unmapped_headers: result.unmappedHeaders,
+        source_filename: fileField.name || null,
+      })
+      .select('id')
+      .single()
+
+    if (stagingError || !inserted) {
+      console.error('Failed to stage upload:', stagingError)
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: upsertError.message },
+        { success: false, error: stagingError?.message ?? 'failed to stage upload' },
         { status: 500 },
       )
     }
 
-    const inserted = upserted ?? []
-
-    // Best-effort embedding generation. Failures here must NOT fail the upload.
-    try {
-      if (inserted.length > 0) {
-        const texts = inserted.map((emp) => employeeSourceText(emp))
-        const vectors = await embedTexts(texts)
-        const embeddingRows = inserted.map((emp, i) => ({
-          employee_id: emp.id,
-          organization_id: organizationId,
-          embedding: vectors[i],
-          source_text: texts[i],
-        }))
-
-        const { error: embedUpsertError } = await admin
-          .from('employee_embeddings')
-          .upsert(embeddingRows, { onConflict: 'employee_id' })
-
-        if (embedUpsertError) {
-          console.error('Failed to upsert embeddings:', embedUpsertError)
-        }
-      }
-    } catch (embedErr) {
-      console.error('Embedding generation failed (non-fatal):', embedErr)
-    }
-
-    return NextResponse.json<ApiResponse<UploadResultData>>({
+    return NextResponse.json<ApiResponse<UploadStagedData>>({
       success: true,
       data: {
-        count: inserted.length,
+        staging_id: inserted.id,
+        count: result.rows.length,
         headerMappings: result.headerMappings,
         warnings: result.warnings,
         unmappedHeaders: result.unmappedHeaders,
-        upload_batch_id: uploadBatchId,
       },
     })
   } catch (err) {

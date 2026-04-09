@@ -20,6 +20,7 @@ interface UploadRowIssue {
 interface UploadResponse {
   success: boolean
   data?: {
+    staging_id?: string
     count: number
     headerMappings?: HeaderMapping[]
     warnings?: UploadRowIssue[]
@@ -115,6 +116,16 @@ export function UploadForm() {
       setWarnings(payload.data?.warnings ?? [])
       setUnmappedHeaders(payload.data?.unmappedHeaders ?? [])
       setStatus('success')
+
+      // Staged — redirect to preview page for user confirmation.
+      const stagingId = payload.data?.staging_id
+      if (stagingId) {
+        router.push(
+          `/onboarding/upload/preview?staging=${encodeURIComponent(stagingId)}`,
+        )
+        return
+      }
+      // Fallback (shouldn't happen with the new API): go to chart.
       router.refresh()
       router.push('/chart')
     } catch {
@@ -222,7 +233,7 @@ export function UploadForm() {
 
       {isSuccess ? (
         <p role="status" className="text-sm text-slate-700">
-          Uploaded {count} employees, redirecting...
+          Parsed {count} employees. Opening preview...
         </p>
       ) : null}
 
@@ -232,7 +243,7 @@ export function UploadForm() {
         className="w-full"
         size="lg"
       >
-        {isUploading ? 'Uploading...' : isSuccess ? 'Uploaded' : 'Upload'}
+        {isUploading ? 'Parsing...' : isSuccess ? 'Parsed' : 'Upload & preview'}
       </Button>
     </form>
   )
