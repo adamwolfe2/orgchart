@@ -8,7 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { profileSchema, type ProfileFormValues } from '@/lib/profile'
+import { profileSchema, type ProfileFormValues } from '@/lib/profile-schema'
 import type { Employee } from '@/lib/types'
 
 import { CustomLinksField } from './custom-links-field'
