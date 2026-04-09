@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useState } from 'react'
 
@@ -9,6 +10,7 @@ import { InviteDialog } from './invite-dialog'
 
 interface ChartHeaderClientProps {
   organizationName: string
+  organizationLogoUrl: string | null
   isAdmin: boolean
   hasClaimedEmployee: boolean
 }
@@ -20,6 +22,7 @@ interface ChartHeaderClientProps {
  */
 export function ChartHeaderClient({
   organizationName,
+  organizationLogoUrl,
   isAdmin,
   hasClaimedEmployee,
 }: ChartHeaderClientProps) {
@@ -29,7 +32,20 @@ export function ChartHeaderClient({
     <>
       <header className="relative z-10 flex h-14 items-center justify-between border-b border-slate-100 bg-white px-6">
         <div className="flex items-center gap-4">
-          <Logo size="sm" showWordmark={false} href="/chart" />
+          {organizationLogoUrl ? (
+            <Link href="/chart" className="flex shrink-0 items-center">
+              <Image
+                src={organizationLogoUrl}
+                alt={organizationName}
+                width={32}
+                height={32}
+                className="h-8 w-8 rounded object-contain"
+                unoptimized
+              />
+            </Link>
+          ) : (
+            <Logo size="sm" showWordmark={false} href="/chart" />
+          )}
           <div className="h-6 w-px bg-slate-200" aria-hidden="true" />
           <h1 className="text-sm font-semibold text-slate-900">{organizationName}</h1>
         </div>

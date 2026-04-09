@@ -64,6 +64,7 @@ export default async function ChartPage() {
     <main className="h-screen overflow-hidden bg-slate-50">
       <ChartHeaderClient
         organizationName={organization.name}
+        organizationLogoUrl={organization.logo_url ?? null}
         isAdmin={isAdmin}
         hasClaimedEmployee={hasClaimedEmployee}
       />
