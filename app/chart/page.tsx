@@ -2,10 +2,12 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { Logo } from '@/components/brand/logo'
-import { OrgChartTree } from '@/components/org-chart/tree'
+import { ChartWithModal } from '@/components/org-chart/chart-with-modal'
 import { Button } from '@/components/ui/button'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import { getEmployeesForOrg } from '@/lib/employees'
+import { createClient } from '@/lib/supabase/server'
+import type { ChatMessage, Employee } from '@/lib/types'
 
 export default async function ChartPage() {
   const auth = await getCurrentUserAndMembership()
@@ -21,6 +23,29 @@ export default async function ChartPage() {
   const { organization, roots } = await getEmployeesForOrg(
     auth.membership.organization_id,
   )
+
+  // Fetch last 50 chat messages for the current user (RLS scoped to own messages)
+  const supabase = await createClient()
+  const { data: messageRows } = await supabase
+    .from('chat_messages')
+    .select('id, organization_id, user_id, role, content, sources, created_at')
+    .eq('organization_id', auth.membership.organization_id)
+    .eq('user_id', auth.user.id)
+    .order('created_at', { ascending: true })
+    .limit(50)
+
+  const initialMessages: ChatMessage[] = (messageRows ?? []) as ChatMessage[]
+
+  // Build an id→employee map so chat citation chips can open the modal
+  const employeesById: Record<string, Employee> = {}
+  function flattenRoots(nodes: typeof roots) {
+    for (const node of nodes) {
+      const { reports: _, ...emp } = node
+      employeesById[emp.id] = emp as Employee
+      flattenRoots(node.reports)
+    }
+  }
+  flattenRoots(roots)
 
   return (
     <main className="min-h-screen bg-white">
@@ -49,7 +74,12 @@ export default async function ChartPage() {
           </Link>
         </div>
       ) : (
-        <OrgChartTree roots={roots} />
+        <ChartWithModal
+          roots={roots}
+          employeesById={employeesById}
+          initialMessages={initialMessages}
+          organizationName={organization.name}
+        />
       )}
     </main>
   )

@@ -73,3 +73,24 @@ export interface ApiResponse<T> {
   data?: T
   error?: string
 }
+
+/** An employee reference stored in chat_messages.sources jsonb. */
+export interface ChatSource {
+  id: string
+  first_name: string
+  last_name: string
+  position: string | null
+  email: string
+  headshot_url: string | null
+}
+
+/** A persisted chat message row. */
+export interface ChatMessage {
+  id: string
+  organization_id: string
+  user_id: string
+  role: 'user' | 'assistant'
+  content: string
+  sources: ChatSource[]
+  created_at: string
+}

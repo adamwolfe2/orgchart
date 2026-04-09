@@ -7,6 +7,8 @@ import { EmployeeModal } from './employee-modal'
 
 interface OrgChartTreeProps {
   roots: EmployeeNode[]
+  /** When provided, the tree delegates selection upward and does not render its own modal. */
+  onSelectEmployee?: (employee: Employee) => void
 }
 
 interface NodeProps {
@@ -91,19 +93,24 @@ function TreeNode({ node, onSelect }: NodeProps) {
   )
 }
 
-export function OrgChartTree({ roots }: OrgChartTreeProps) {
+export function OrgChartTree({ roots, onSelectEmployee }: OrgChartTreeProps) {
   const [selected, setSelected] = useState<Employee | null>(null)
+
+  const handleSelect = onSelectEmployee ?? setSelected
 
   return (
     <>
       <div className="w-full overflow-x-auto">
         <div className="flex min-w-full justify-center gap-16 px-8 py-12">
           {roots.map((root) => (
-            <TreeNode key={root.id} node={root} onSelect={setSelected} />
+            <TreeNode key={root.id} node={root} onSelect={handleSelect} />
           ))}
         </div>
       </div>
-      <EmployeeModal employee={selected} onClose={() => setSelected(null)} />
+      {/* Only render the modal if we own the state (no external handler). */}
+      {onSelectEmployee ? null : (
+        <EmployeeModal employee={selected} onClose={() => setSelected(null)} />
+      )}
     </>
   )
 }
