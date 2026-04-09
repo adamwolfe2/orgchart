@@ -84,6 +84,18 @@ export default function LandingPage() {
           </pre>
         </details>
       </section>
+
+      <footer className="mx-auto w-full max-w-6xl px-6 pb-10 text-center text-sm text-slate-500">
+        Product of{' '}
+        <a
+          href="https://aimanagingservices.com"
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-slate-700 underline-offset-4 hover:text-slate-900 hover:underline"
+        >
+          AIMS
+        </a>
+      </footer>
     </main>
   )
 }
