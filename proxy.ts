@@ -1,7 +1,14 @@
 import { type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
-export async function middleware(request: NextRequest) {
+/**
+ * Next.js 16 "proxy" file convention — renamed from middleware.ts per
+ * the upstream deprecation. Same semantics as the old middleware hook:
+ * runs on every matched request before it hits the page/route handler.
+ *
+ * See: https://nextjs.org/docs/messages/middleware-to-proxy
+ */
+export async function proxy(request: NextRequest) {
   return await updateSession(request)
 }
 
