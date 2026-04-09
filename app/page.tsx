@@ -1,16 +1,22 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 
 import { Logo } from '@/components/brand/logo'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FallingPattern } from '@/components/ui/falling-pattern'
+import { getCurrentUserAndMembership } from '@/lib/auth'
 
 const CSV_SAMPLE = `first_name,last_name,email,position,supervisor_email
 Jane,Smith,jane@acme.com,CEO,
 John,Doe,john@acme.com,VP Engineering,jane@acme.com
 Sarah,Lee,sarah@acme.com,Senior Engineer,john@acme.com`
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  // Already logged in → skip the marketing page, go straight to the chart
+  const auth = await getCurrentUserAndMembership()
+  if (auth?.membership) redirect('/chart')
+  if (auth && !auth.membership) redirect('/onboarding/org')
   return (
     <main className="relative isolate min-h-screen bg-white">
       <div
