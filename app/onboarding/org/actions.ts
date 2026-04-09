@@ -122,5 +122,5 @@ export async function createOrganization(formData: FormData) {
   }
 
   revalidatePath('/chart')
-  redirect('/onboarding/upload')
+  redirect('/onboarding/brand')
 }

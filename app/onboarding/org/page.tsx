@@ -58,7 +58,7 @@ export default async function OnboardingOrgPage() {
       <div className="flex items-start justify-center px-6 pt-20">
         <div className="w-full max-w-md">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Step 1 of 2
+            Step 1 of 3
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
             Set up your organization

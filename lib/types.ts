@@ -74,6 +74,14 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+/** Result from Firecrawl brand extraction. All fields are null when skipped. */
+export interface BrandExtractionResult {
+  logoUrl: string | null
+  primaryColor: string | null
+  secondaryColor: string | null
+  accentColor: string | null
+}
+
 /** An admin-generated join link for an organization. */
 export interface OrganizationInvite {
   id: string
