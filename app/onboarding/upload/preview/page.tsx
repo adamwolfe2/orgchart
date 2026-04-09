@@ -81,10 +81,10 @@ export default async function UploadPreviewPage({ searchParams }: PageProps) {
         className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
       >
         <FallingPattern
-          className="h-full w-full opacity-50 [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]"
-          density={3}
-          duration={400}
-          blurIntensity="1.5em"
+          className="h-full w-full [mask-image:radial-gradient(ellipse_at_top,black_50%,transparent_100%)]"
+          density={1.25}
+          duration={300}
+          blurIntensity="0.7em"
         />
       </div>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">

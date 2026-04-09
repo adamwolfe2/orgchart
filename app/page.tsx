@@ -12,7 +12,18 @@ Sarah,Lee,sarah@acme.com,Senior Engineer,john@acme.com`
 
 export default function LandingPage() {
   return (
-    <main className="min-h-screen bg-white">
+    <main className="relative isolate min-h-screen bg-white">
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+      >
+        <FallingPattern
+          className="h-full w-full [mask-image:radial-gradient(ellipse_at_center,black_55%,transparent_100%)]"
+          density={1}
+          duration={240}
+          blurIntensity="0.5em"
+        />
+      </div>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
         <Logo size="md" />
         <Link
@@ -23,17 +34,7 @@ export default function LandingPage() {
         </Link>
       </header>
 
-      <section className="relative isolate mx-auto w-full max-w-4xl px-6 pt-16 pb-20 text-center">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
-        >
-          <FallingPattern
-            className="h-full w-full [mask-image:radial-gradient(ellipse_60%_50%_at_center,black,transparent)]"
-            density={2}
-            duration={300}
-          />
-        </div>
+      <section className="mx-auto w-full max-w-4xl px-6 pt-16 pb-20 text-center">
         <div className="flex justify-center">
           <Badge variant="outline">Free during beta</Badge>
         </div>
