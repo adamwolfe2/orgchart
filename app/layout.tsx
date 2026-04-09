@@ -1,14 +1,78 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import type { CSSProperties, ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import type { Organization } from '@/lib/types'
 import './globals.css'
 
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? 'https://orgchart.aimanagingservices.com'
+
+const TITLE = 'OrgChart — your team, from a single CSV'
+const DESCRIPTION =
+  'Upload a CSV of your team and get a hosted, searchable org chart in minutes. Built by AIMS.'
+
 export const metadata: Metadata = {
-  title: 'OrgChart',
-  description:
-    'Upload a CSV of your team. Get a hosted, searchable org chart in minutes.',
+  metadataBase: new URL(APP_URL),
+  title: {
+    default: TITLE,
+    template: '%s · OrgChart',
+  },
+  description: DESCRIPTION,
+  applicationName: 'OrgChart',
+  authors: [{ name: 'AI Managing Services', url: 'https://aimanagingservices.com' }],
+  keywords: [
+    'org chart',
+    'organizational chart',
+    'employee directory',
+    'CSV upload',
+    'company structure',
+    'team hierarchy',
+  ],
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    type: 'website',
+    url: APP_URL,
+    title: TITLE,
+    description: DESCRIPTION,
+    siteName: 'OrgChart',
+    locale: 'en_US',
+    images: [
+      {
+        url: '/logo-mark.png',
+        width: 512,
+        height: 512,
+        alt: 'OrgChart',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary',
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ['/logo-mark.png'],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
+  icons: {
+    icon: '/icon.png',
+  },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#ffffff',
 }
 
 const DEFAULT_PRIMARY = '#0f172a'
