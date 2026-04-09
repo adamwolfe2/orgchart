@@ -1,10 +1,26 @@
 import Papa from 'papaparse'
 import { z } from 'zod'
 
+import { expandNickname, NICKNAMES } from './csv/nicknames'
+import {
+  cleanCell,
+  emailLocalTokens,
+  firstToken,
+  lastToken,
+  levenshtein,
+  looksLikeEmail,
+  normalize,
+  splitFullName,
+  stripHonorifics,
+} from './csv/normalize'
+
 /**
  * Canonical employee fields. The CSV parser fuzzy-matches incoming headers
  * to one of these names so messy templates ("First Name", "Email Address",
  * "Reports To", "Job Title", etc.) all work without manual mapping.
+ *
+ * `full_name` is a synthetic canonical: when detected, it's split into
+ * first_name + last_name during row parsing rather than stored directly.
  */
 const CANONICAL_FIELDS = [
   'first_name',
@@ -13,6 +29,7 @@ const CANONICAL_FIELDS = [
   'position',
   'supervisor_email',
   'context',
+  'full_name',
 ] as const
 
 type CanonicalField = (typeof CANONICAL_FIELDS)[number]
@@ -27,6 +44,7 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'fname',
     'f_name',
     'forename',
+    'christianname',
   ],
   last_name: [
     'last_name',
@@ -38,6 +56,20 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'lname',
     'l_name',
   ],
+  full_name: [
+    'full_name',
+    'fullname',
+    'name',
+    'employee',
+    'employee_name',
+    'employeename',
+    'displayname',
+    'display_name',
+    'legalname',
+    'legal_name',
+    'personname',
+    'person_name',
+  ],
   email: [
     'email',
     'emailaddress',
@@ -45,11 +77,14 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'mail',
     'workemail',
     'work_email',
-    'personalemail',
-    'personal_email',
     'companyemail',
     'company_email',
+    'officialemail',
+    'primaryemail',
+    'businessemail',
     'e_mail',
+    'personalemail',
+    'personal_email',
   ],
   position: [
     'position',
@@ -62,6 +97,8 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'jobposition',
     'job_position',
     'designation',
+    'function',
+    'occupation',
   ],
   supervisor_email: [
     'supervisor_email',
@@ -76,12 +113,18 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'reportsto',
     'reportstoemail',
     'reports_to_email',
+    'reportingto',
+    'reporting_to',
+    'reportingmanager',
     'boss',
     'bossemail',
     'boss_email',
     'parent',
     'parentemail',
     'parent_email',
+    'leadby',
+    'ledby',
+    'head',
   ],
   context: [
     'context',
@@ -101,11 +144,8 @@ const ALIASES: Record<CanonicalField, string[]> = {
     'extra',
     'extrainfo',
     'extra_info',
+    'duties',
   ],
-}
-
-function normalize(h: string): string {
-  return h.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
 const NORMALIZED_ALIASES: Record<string, CanonicalField> = (() => {
@@ -118,13 +158,17 @@ const NORMALIZED_ALIASES: Record<string, CanonicalField> = (() => {
   return map
 })()
 
+/**
+ * Match a raw header to a canonical field. Returns null if no confident
+ * match. Uses exact normalized match first, then falls back to a longest-
+ * substring-containment search so "Work Email Address" still resolves to
+ * the "email" canonical via the "emailaddress" alias.
+ */
 export function matchHeader(rawHeader: string): CanonicalField | null {
   const norm = normalize(rawHeader)
   if (!norm) return null
 
-  if (NORMALIZED_ALIASES[norm]) {
-    return NORMALIZED_ALIASES[norm]
-  }
+  if (NORMALIZED_ALIASES[norm]) return NORMALIZED_ALIASES[norm]
 
   let bestField: CanonicalField | null = null
   let bestLen = 0
@@ -141,58 +185,27 @@ export function matchHeader(rawHeader: string): CanonicalField | null {
   return bestField
 }
 
-function looksLikeEmail(s: string): boolean {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)
-}
-
-/** Classic Levenshtein edit distance. O(m*n) time, O(n) space. */
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0
-  if (!a.length) return b.length
-  if (!b.length) return a.length
-
-  const m = a.length
-  const n = b.length
-  let prev = new Array<number>(n + 1)
-  let curr = new Array<number>(n + 1)
-  for (let j = 0; j <= n; j++) prev[j] = j
-
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i
-    for (let j = 1; j <= n; j++) {
-      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + cost,
-      )
+export const csvRowSchema = z
+  .object({
+    first_name: z.string().trim().default(''),
+    last_name: z.string().trim().default(''),
+    email: z.string().trim().toLowerCase().email('valid email required'),
+    position: z.string().trim().optional().default(''),
+    supervisor_email: z.string().trim().toLowerCase().optional().default(''),
+    context: z.string().trim().optional().default(''),
+  })
+  .superRefine((val, ctx) => {
+    // Must have at least one of first_name / last_name. Single-name
+    // employees (common in some cultures) are valid — we just need
+    // something to display.
+    if (!val.first_name && !val.last_name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['first_name'],
+        message: 'at least one of first_name or last_name is required',
+      })
     }
-    const tmp = prev
-    prev = curr
-    curr = tmp
-  }
-
-  return prev[n]
-}
-
-function firstToken(raw: string): string {
-  const tokens = raw.trim().split(/\s+/).filter(Boolean)
-  return tokens[0] ?? ''
-}
-
-function lastToken(raw: string): string {
-  const tokens = raw.trim().split(/\s+/).filter(Boolean)
-  return tokens[tokens.length - 1] ?? ''
-}
-
-export const csvRowSchema = z.object({
-  first_name: z.string().trim().min(1, 'first_name is required'),
-  last_name: z.string().trim().min(1, 'last_name is required'),
-  email: z.string().trim().toLowerCase().email('valid email required'),
-  position: z.string().trim().optional().default(''),
-  supervisor_email: z.string().trim().toLowerCase().optional().default(''),
-  context: z.string().trim().optional().default(''),
-})
+  })
 
 export type CsvRow = z.infer<typeof csvRowSchema>
 
@@ -210,20 +223,25 @@ export interface CsvParseResult {
   rows: CsvRow[]
   /** Hard errors that block the upload: missing required headers, empty file, etc. */
   errors: CsvIssue[]
-  /** Row-level problems that don't block the upload: skipped rows, unresolved supervisors, etc. */
+  /** Row-level problems that don't block the upload. */
   warnings: CsvIssue[]
   headerMappings: HeaderMapping[]
   unmappedHeaders: string[]
   missingRequired: CanonicalField[]
 }
 
+/**
+ * Required canonical fields. full_name counts as satisfying BOTH
+ * first_name and last_name (it's split at parse time).
+ */
 const REQUIRED_FIELDS: CanonicalField[] = ['first_name', 'last_name', 'email']
 const HEADER_SCAN_LIMIT = 15
 
 /**
- * Scan the first N non-empty rows and return the index of the row that looks
- * most like a header. Skips merged-cell title rows like "MA Employees" that
- * sit above the real header row in exported spreadsheets.
+ * Scan the first N non-empty rows and return the index of the row that
+ * looks most like a header. Skips merged-cell title rows like "MA
+ * Employees" above the real header. A row containing a `full_name`
+ * match is treated as satisfying BOTH first_name and last_name.
  */
 function findHeaderRow(rows: string[][]): number {
   const limit = Math.min(rows.length, HEADER_SCAN_LIMIT)
@@ -237,7 +255,15 @@ function findHeaderRow(rows: string[][]): number {
 
     const mapped = row.map((h) => matchHeader(h ?? ''))
     const fields = new Set(mapped.filter((f): f is CanonicalField => f !== null))
-    const requiredFound = REQUIRED_FIELDS.filter((f) => fields.has(f)).length
+
+    // full_name satisfies both name fields for header-detection scoring
+    const satisfies = new Set<CanonicalField>(fields)
+    if (fields.has('full_name')) {
+      satisfies.add('first_name')
+      satisfies.add('last_name')
+    }
+
+    const requiredFound = REQUIRED_FIELDS.filter((f) => satisfies.has(f)).length
     const totalFound = fields.size
 
     if (
@@ -264,20 +290,21 @@ interface StagedRow {
 }
 
 /**
- * Fuzzy-resolve a supervisor value (which might be an email, a full name, a
- * typo'd name, or a nickname) to an employee email from the staged rows.
+ * Fuzzy-resolve a supervisor value to an employee email.
  *
- * Strategy, in order:
- *   1. If it already looks like an email, return as-is.
- *   2. Exact normalized "firstnamelastname" match.
- *   3. Levenshtein distance ≤ 2 on full name (handles "Hoffmann" vs "Hoffman").
- *   4. Last-name fuzzy match with first-initial check (handles "Michael" vs
- *      "Mike", "Jess" vs "Jessica").
- *
- * Returns the resolved email, or null if no confident match.
+ * Tier order:
+ *   1. Already an email → use as-is
+ *   2. Exact normalized "firstnamelastname" match
+ *   3. Levenshtein ≤2 (≤3 for long names) on normalized full name
+ *   4. Nickname expansion: if the raw supervisor's first token has known
+ *      nickname variants, retry tier 2 with each variant
+ *   5. Last-name fuzzy match (≤1 edit) gated by same first initial or
+ *      first-name prefix overlap
+ *   6. Email local-part match: supervisor "Mike Hoffman" against
+ *      employees whose email decomposes to matching tokens
  */
 function resolveSupervisor(raw: string, staged: StagedRow[]): string | null {
-  const trimmed = raw.trim()
+  const trimmed = cleanCell(raw)
   if (!trimmed) return null
   if (looksLikeEmail(trimmed)) return trimmed.toLowerCase()
 
@@ -286,6 +313,7 @@ function resolveSupervisor(raw: string, staged: StagedRow[]): string | null {
 
   const rawFirst = normalize(firstToken(trimmed))
   const rawLast = normalize(lastToken(trimmed))
+  const rawFirstVariants = expandNickname(rawFirst)
 
   let bestEmail: string | null = null
   let bestScore = Infinity
@@ -295,24 +323,48 @@ function resolveSupervisor(raw: string, staged: StagedRow[]): string | null {
     const empLast = normalize(emp.last_name)
     const empFull = empFirst + empLast
 
-    // Tier 1: exact full match wins immediately.
+    // Tier 2: exact full match wins immediately
     if (empFull === rawNorm) return emp.email
 
-    // Tier 2: Levenshtein full-name fuzzy match.
-    // Threshold scales slightly with length so longer names get a bit more slack.
+    // Tier 3: Levenshtein full-name fuzzy
     const fullDist = levenshtein(rawNorm, empFull)
     const fullThreshold = empFull.length >= 12 ? 3 : 2
-    if (fullDist <= fullThreshold) {
-      const score = fullDist
-      if (score < bestScore) {
-        bestScore = score
-        bestEmail = emp.email
+    if (fullDist <= fullThreshold && fullDist < bestScore) {
+      bestScore = fullDist
+      bestEmail = emp.email
+    }
+
+    // Tier 4: nickname expansion — retry exact match with nickname alternatives
+    if (rawFirstVariants.size > 1) {
+      for (const variant of rawFirstVariants) {
+        if (variant === rawFirst) continue
+        const expanded = variant + normalize(lastToken(trimmed))
+        if (expanded === empFull) {
+          // Treat as near-exact
+          const score = 0.5
+          if (score < bestScore) {
+            bestScore = score
+            bestEmail = emp.email
+          }
+        }
+      }
+      // Also try nickname-expanded LEFT side: maybe emp's first is a nickname
+      // of the raw's first, OR vice versa
+      const empFirstVariants = expandNickname(empFirst)
+      const overlap = [...rawFirstVariants].some((v) => empFirstVariants.has(v))
+      if (overlap && rawLast && empLast) {
+        const lastDist = levenshtein(rawLast, empLast)
+        if (lastDist <= 1) {
+          const score = 0.6 + lastDist
+          if (score < bestScore) {
+            bestScore = score
+            bestEmail = emp.email
+          }
+        }
       }
     }
 
-    // Tier 3: last-name match with first-letter sanity check. Handles
-    // Mike<->Michael and Jess<->Jessica where Levenshtein on full name is
-    // too far but the last name is close and the first initial agrees.
+    // Tier 5: last-name fuzzy + first initial / prefix check
     if (rawLast && empLast) {
       const lastDist = levenshtein(rawLast, empLast)
       if (lastDist <= 1) {
@@ -320,22 +372,36 @@ function resolveSupervisor(raw: string, staged: StagedRow[]): string | null {
           rawFirst.length > 0 &&
           empFirst.length > 0 &&
           rawFirst[0] === empFirst[0]
-        // Also accept if one first name is a prefix of the other: "Jess" prefix
-        // of "Jessica", "Mike" is not a prefix of "Michael" but the initial
-        // check catches it.
         const prefixMatch =
           rawFirst.length > 0 &&
           empFirst.length > 0 &&
           (rawFirst.startsWith(empFirst) || empFirst.startsWith(rawFirst))
 
         if (sameInitial || prefixMatch) {
-          // Penalty so tier-2 exact-full wins over tier-3, but tier-3 still
-          // beats a distant tier-2 match.
           const score = lastDist + 1 + (prefixMatch ? 0 : 0.5)
           if (score < bestScore) {
             bestScore = score
             bestEmail = emp.email
           }
+        }
+      }
+    }
+
+    // Tier 6: email local-part tokens match first+last
+    const emailTokens = emailLocalTokens(emp.email)
+    if (emailTokens.length >= 1 && (rawFirst || rawLast)) {
+      const tokenSet = new Set(emailTokens)
+      const matchesFirst = rawFirst ? tokenSet.has(rawFirst) : false
+      const matchesLast = rawLast ? tokenSet.has(rawLast) : false
+      // Also check nickname variants of the first name
+      const matchesFirstNickname =
+        !matchesFirst &&
+        [...rawFirstVariants].some((v) => tokenSet.has(v))
+      if ((matchesFirst || matchesFirstNickname) && matchesLast) {
+        const score = 0.8 // slightly worse than nickname match, better than last-name-only
+        if (score < bestScore) {
+          bestScore = score
+          bestEmail = emp.email
         }
       }
     }
@@ -345,29 +411,84 @@ function resolveSupervisor(raw: string, staged: StagedRow[]): string | null {
 }
 
 /**
+ * Detect cycles in the supervisor graph. Returns a list of
+ * [childEmail, parentEmail] edges to break so the tree renders cleanly.
+ * Strategy: DFS from each node, if we revisit a node on the current
+ * stack, break the edge from the lexicographically-latest email in
+ * the cycle (deterministic).
+ */
+function detectAndBreakCycles(rows: CsvRow[]): Array<[string, string]> {
+  const edgesToBreak: Array<[string, string]> = []
+  const parentOf = new Map<string, string>()
+  rows.forEach((r) => {
+    if (r.supervisor_email) parentOf.set(r.email, r.supervisor_email)
+  })
+
+  const WHITE = 0
+  const GRAY = 1
+  const BLACK = 2
+  const color = new Map<string, number>()
+  for (const email of parentOf.keys()) color.set(email, WHITE)
+
+  function visit(start: string): void {
+    const stack: string[] = [start]
+    const pathSet = new Set<string>()
+    const path: string[] = []
+
+    // Iterative DFS following the single-parent chain
+    let current: string | undefined = start
+    while (current) {
+      if (color.get(current) === BLACK) return
+      if (pathSet.has(current)) {
+        // Found a cycle — from `current` back to current in `path`
+        const cycleStart = path.indexOf(current)
+        const cycle = path.slice(cycleStart).concat(current)
+        // Break at the lex-latest email
+        let latest = cycle[0]
+        for (const e of cycle) if (e > latest) latest = e
+        const latestParent = parentOf.get(latest)
+        if (latestParent) {
+          edgesToBreak.push([latest, latestParent])
+          parentOf.delete(latest)
+        }
+        return
+      }
+      pathSet.add(current)
+      path.push(current)
+      color.set(current, GRAY)
+      const next = parentOf.get(current)
+      current = next
+    }
+    // Mark all visited as BLACK
+    for (const e of path) color.set(e, BLACK)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void stack
+  }
+
+  for (const email of parentOf.keys()) {
+    if (color.get(email) === WHITE) visit(email)
+  }
+
+  return edgesToBreak
+}
+
+/**
  * Parse a CSV string into validated employee rows.
- *
- * Smart behaviors (all designed so a messy real-world export still uploads):
- *   - Auto-skips pre-header junk rows (merged-cell titles, blanks).
- *   - First-seen-wins for duplicate header->canonical collisions (work email
- *     beats personal email).
- *   - Accepts supervisor as email, full name, typo'd name, or nickname via
- *     Levenshtein + last-name fuzzy resolution.
- *   - Row-level failures (bad email, unresolvable supervisor, duplicate email)
- *     become WARNINGS, not errors. The upload proceeds with the good rows.
- *   - Only two things block the upload: missing required columns, and zero
- *     parseable rows.
  */
 export function parseEmployeeCsv(csvText: string): CsvParseResult {
-  const parsed = Papa.parse<string[]>(csvText, {
+  // Strip UTF-8 BOM on the whole file
+  const input = csvText.replace(/^\uFEFF/, '')
+
+  const parsed = Papa.parse<string[]>(input, {
     header: false,
-    skipEmptyLines: true,
+    skipEmptyLines: 'greedy',
   })
   const allRows = (parsed.data as string[][]) ?? []
 
   const headerIdx = findHeaderRow(allRows)
   const rawHeaders = allRows[headerIdx] ?? []
 
+  // Build per-column mapping, first-seen-wins for duplicate canonicals.
   const claimedFields = new Set<CanonicalField>()
   const fieldToCol = new Map<CanonicalField, number>()
   const headerMappings: HeaderMapping[] = rawHeaders.map((raw, colIdx) => {
@@ -380,10 +501,20 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     return { raw: (raw ?? '').trim(), canonical: null }
   })
 
+  // full_name satisfies both first_name and last_name requirements
+  const hasFullName = claimedFields.has('full_name')
+  const effectiveClaimed = new Set<CanonicalField>(claimedFields)
+  if (hasFullName) {
+    effectiveClaimed.add('first_name')
+    effectiveClaimed.add('last_name')
+  }
+
   const unmappedHeaders = headerMappings
     .filter((m) => !m.canonical && m.raw !== '')
     .map((m) => m.raw)
-  const missingRequired = REQUIRED_FIELDS.filter((f) => !claimedFields.has(f))
+  const missingRequired = REQUIRED_FIELDS.filter(
+    (f) => !effectiveClaimed.has(f),
+  )
 
   if (missingRequired.length > 0) {
     return {
@@ -410,29 +541,69 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
   const seenEmails = new Set<string>()
   const staged: StagedRow[] = []
 
+  // Track last non-empty row's non-required columns for forward-fill on
+  // merged-cell exports. Only applies to position / supervisor / context;
+  // first_name, last_name, and email must always be explicit.
+  let lastNonRequired: {
+    position: string
+    supervisor_email: string
+    context: string
+  } | null = null
+
   dataRows.forEach((cells, idx) => {
     const lineNum = headerIdx + idx + 2
     if (!cells || cells.every((c) => !c || c.trim() === '')) return
 
     const obj: Record<string, string> = {}
     for (const [field, colIdx] of fieldToCol.entries()) {
-      obj[field] = cells[colIdx] ?? ''
+      obj[field] = cleanCell(cells[colIdx] ?? '')
     }
 
-    // Strip supervisor for schema validation — we resolve it in a second pass.
-    const rawSupervisor = (obj.supervisor_email ?? '').trim()
-    const probe = { ...obj, supervisor_email: '' }
+    // full_name split
+    if (hasFullName && obj.full_name) {
+      const split = splitFullName(obj.full_name)
+      if (!obj.first_name) obj.first_name = split.first
+      if (!obj.last_name) obj.last_name = split.last
+    }
+
+    // Per-cell "Last, First" detection: if first_name contains a comma
+    // (e.g. "Doe, John") and last_name is blank, split it.
+    if (obj.first_name && obj.first_name.includes(',') && !obj.last_name) {
+      const split = splitFullName(obj.first_name)
+      obj.first_name = split.first
+      obj.last_name = split.last
+    }
+
+    // Strip honorifics from the display name pieces — we keep the cleaned
+    // version so the tree UI doesn't show "Dr. John Smith Jr."
+    if (obj.first_name) obj.first_name = stripHonorifics(obj.first_name)
+    if (obj.last_name) obj.last_name = stripHonorifics(obj.last_name)
+
+    // Forward-fill non-required columns when they're blank and the
+    // previous row had them. Heuristic: only fill if at least one
+    // required field (first_name / email) is present in the current row
+    // — we don't want to promote junk rows.
+    const hasAnyRequired = !!(obj.first_name || obj.last_name || obj.email)
+    if (hasAnyRequired && lastNonRequired) {
+      if (!obj.position) obj.position = lastNonRequired.position
+      if (!obj.supervisor_email)
+        obj.supervisor_email = lastNonRequired.supervisor_email
+      if (!obj.context) obj.context = lastNonRequired.context
+    }
+
+    const rawSupervisor = cleanCell(obj.supervisor_email ?? '')
+    // full_name is synthetic — exclude it from schema validation since
+    // it's already been split into first_name / last_name above.
+    const { full_name: _fullName, ...rest } = obj
+    void _fullName
+    const probe = { ...rest, supervisor_email: '' }
 
     const result = csvRowSchema.safeParse(probe)
     if (!result.success) {
-      // Row-level validation failure: record as warning, skip the row.
       const msg = result.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)
         .join('; ')
-      warnings.push({
-        row: lineNum,
-        message: `row skipped — ${msg}`,
-      })
+      warnings.push({ row: lineNum, message: `row skipped — ${msg}` })
       return
     }
 
@@ -455,6 +626,14 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
       supervisorRaw: rawSupervisor,
       line: lineNum,
     })
+
+    // Update forward-fill state from the RAW obj (before zod normalization)
+    // so the next row inherits the original casing.
+    lastNonRequired = {
+      position: obj.position ?? '',
+      supervisor_email: rawSupervisor,
+      context: obj.context ?? '',
+    }
   })
 
   if (staged.length === 0) {
@@ -474,7 +653,7 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     }
   }
 
-  // Second pass: resolve supervisor values to employee emails via fuzzy match.
+  // Resolve supervisor values
   const rows: CsvRow[] = staged.map((s) => {
     const base: CsvRow = {
       first_name: s.first_name,
@@ -488,6 +667,7 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     if (!s.supervisorRaw) return base
 
     const resolved = resolveSupervisor(s.supervisorRaw, staged)
+
     if (resolved && resolved !== s.email) {
       return { ...base, supervisor_email: resolved }
     }
@@ -507,8 +687,26 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     return base
   })
 
-  // Cross-row sanity: if a resolved supervisor_email somehow points outside
-  // the seen set, warn (shouldn't happen with the resolver, but defensive).
+  // Cycle detection — break any cycles deterministically
+  const brokenEdges = detectAndBreakCycles(rows)
+  if (brokenEdges.length > 0) {
+    const brokenSet = new Set(brokenEdges.map(([a, b]) => `${a}|${b}`))
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      if (
+        row.supervisor_email &&
+        brokenSet.has(`${row.email}|${row.supervisor_email}`)
+      ) {
+        warnings.push({
+          row: staged[i].line,
+          message: `cycle detected: "${row.email}" → "${row.supervisor_email}" — supervisor link dropped to break the cycle`,
+        })
+        rows[i] = { ...row, supervisor_email: '' }
+      }
+    }
+  }
+
+  // Cross-row sanity
   rows.forEach((row, idx) => {
     if (row.supervisor_email && !seenEmails.has(row.supervisor_email)) {
       warnings.push({
@@ -518,8 +716,6 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     }
   })
 
-  // If nothing has an empty supervisor, we have no root. Warn but don't block —
-  // the tree renderer will just show a disconnected set.
   if (rows.length > 0 && !rows.some((r) => !r.supervisor_email)) {
     warnings.push({
       row: 0,
@@ -537,3 +733,6 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     missingRequired,
   }
 }
+
+// Re-export NICKNAMES for use in tests / LLM fallback later
+export { NICKNAMES }

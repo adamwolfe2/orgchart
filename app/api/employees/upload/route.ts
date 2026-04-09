@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -12,6 +13,7 @@ interface UploadResultData {
   headerMappings: HeaderMapping[]
   warnings: CsvIssue[]
   unmappedHeaders: string[]
+  upload_batch_id: string
 }
 
 interface UploadValidationError extends ApiResponse<never> {
@@ -111,6 +113,7 @@ export async function POST(request: Request) {
     }
 
     const organizationId = membership.organization_id
+    const uploadBatchId = randomUUID()
 
     const employeeRows = result.rows.map((row) => ({
       organization_id: organizationId,
@@ -120,6 +123,7 @@ export async function POST(request: Request) {
       position: row.position || null,
       supervisor_email: row.supervisor_email || null,
       context: row.context || null,
+      upload_batch_id: uploadBatchId,
     }))
 
     const admin = createAdminClient()
@@ -173,6 +177,7 @@ export async function POST(request: Request) {
         headerMappings: result.headerMappings,
         warnings: result.warnings,
         unmappedHeaders: result.unmappedHeaders,
+        upload_batch_id: uploadBatchId,
       },
     })
   } catch (err) {
