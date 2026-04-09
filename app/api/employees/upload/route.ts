@@ -16,6 +16,20 @@ import type { ApiResponse } from '@/lib/types'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024 // 5MB
 
+/**
+ * Per-org rate limit for the parse endpoint. The full flow is heavy:
+ * papaparse + zod validation + optional LLM fallback (cached, but the
+ * first call is non-trivial) + writing a jsonb staging row. Cap the
+ * rate so a runaway script (or a mis-wired client retry loop) can't
+ * burn LLM credits or flood the staging table.
+ *
+ * Window is sliding — we count rows created in the last RATE_WINDOW_MS
+ * for the caller's organization. Enforced via the existing
+ * employee_upload_stagings table so there's no new infrastructure.
+ */
+const RATE_LIMIT_MAX = 10
+const RATE_WINDOW_MS = 60_000
+
 interface UploadStagedData {
   staging_id: string
   count: number
@@ -134,6 +148,30 @@ export async function POST(request: Request) {
       .delete()
       .eq('organization_id', organizationId)
       .lt('expires_at', new Date().toISOString())
+
+    // Per-org rate limit. Count staging rows this org has created in
+    // the last RATE_WINDOW_MS. 429 if they're over the cap.
+    const windowStart = new Date(Date.now() - RATE_WINDOW_MS).toISOString()
+    const { count: recentCount } = await admin
+      .from('employee_upload_stagings')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId)
+      .gte('created_at', windowStart)
+
+    if ((recentCount ?? 0) >= RATE_LIMIT_MAX) {
+      return NextResponse.json<ApiResponse<never>>(
+        {
+          success: false,
+          error: `rate limited — max ${RATE_LIMIT_MAX} uploads per minute per organization. Try again shortly.`,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': Math.ceil(RATE_WINDOW_MS / 1000).toString(),
+          },
+        },
+      )
+    }
 
     const { data: inserted, error: stagingError } = await admin
       .from('employee_upload_stagings')

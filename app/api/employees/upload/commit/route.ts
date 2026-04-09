@@ -5,6 +5,8 @@ import { embedTexts, employeeSourceText } from '@/lib/embeddings'
 import type { CsvRow } from '@/lib/csv'
 import type { ApiResponse } from '@/lib/types'
 
+const MAX_PARSED_ROWS = 10_000
+
 interface CommitRequest {
   staging_id: string
 }
@@ -104,6 +106,15 @@ export async function POST(request: Request) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: 'staging row contained no rows' },
         { status: 400 },
+      )
+    }
+    if (parsedRows.length > MAX_PARSED_ROWS) {
+      return NextResponse.json<ApiResponse<never>>(
+        {
+          success: false,
+          error: `staged upload is too large (${parsedRows.length} rows, max ${MAX_PARSED_ROWS})`,
+        },
+        { status: 413 },
       )
     }
 
