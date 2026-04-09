@@ -12,7 +12,7 @@ interface HeaderMapping {
   canonical: string | null
 }
 
-interface UploadRowError {
+interface UploadRowIssue {
   row?: number
   message: string
 }
@@ -22,9 +22,12 @@ interface UploadResponse {
   data?: {
     count: number
     headerMappings?: HeaderMapping[]
+    warnings?: UploadRowIssue[]
+    unmappedHeaders?: string[]
   }
   error?: string
-  errors?: UploadRowError[]
+  errors?: UploadRowIssue[]
+  warnings?: UploadRowIssue[]
   headerMappings?: HeaderMapping[]
   unmappedHeaders?: string[]
   missingRequired?: string[]
@@ -37,7 +40,8 @@ export function UploadForm() {
   const [file, setFile] = useState<File | null>(null)
   const [status, setStatus] = useState<UploadStatus>('idle')
   const [count, setCount] = useState<number>(0)
-  const [errors, setErrors] = useState<UploadRowError[]>([])
+  const [errors, setErrors] = useState<UploadRowIssue[]>([])
+  const [warnings, setWarnings] = useState<UploadRowIssue[]>([])
   const [generalError, setGeneralError] = useState<string | null>(null)
   const [headerMappings, setHeaderMappings] = useState<HeaderMapping[]>([])
   const [unmappedHeaders, setUnmappedHeaders] = useState<string[]>([])
@@ -45,6 +49,7 @@ export function UploadForm() {
   function reset() {
     setStatus('idle')
     setErrors([])
+    setWarnings([])
     setGeneralError(null)
     setHeaderMappings([])
     setUnmappedHeaders([])
@@ -66,6 +71,7 @@ export function UploadForm() {
 
     setStatus('uploading')
     setErrors([])
+    setWarnings([])
     setGeneralError(null)
     setHeaderMappings([])
     setUnmappedHeaders([])
@@ -90,11 +96,12 @@ export function UploadForm() {
         setStatus('error')
         const rowErrors = payload?.errors ?? []
         setErrors(rowErrors)
+        setWarnings(payload?.warnings ?? [])
         setHeaderMappings(payload?.headerMappings ?? [])
         setUnmappedHeaders(payload?.unmappedHeaders ?? [])
         setGeneralError(
           payload?.error === 'validation'
-            ? 'Some rows could not be parsed. See details below.'
+            ? 'Your file is missing required columns. See details below.'
             : (payload?.error ??
                 (rowErrors.length === 0
                   ? 'Upload failed. Please check your file and try again.'
@@ -105,6 +112,8 @@ export function UploadForm() {
 
       setCount(payload.data?.count ?? 0)
       setHeaderMappings(payload.data?.headerMappings ?? [])
+      setWarnings(payload.data?.warnings ?? [])
+      setUnmappedHeaders(payload.data?.unmappedHeaders ?? [])
       setStatus('success')
       router.refresh()
       router.push('/chart')
@@ -185,6 +194,26 @@ export function UploadForm() {
                   ? `Row ${error.row}: `
                   : ''}
                 {error.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {warnings.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          <p className="text-xs font-medium text-amber-900">
+            {isSuccess
+              ? `Uploaded with ${warnings.length} note${warnings.length === 1 ? '' : 's'}`
+              : `${warnings.length} row${warnings.length === 1 ? '' : 's'} to review`}
+          </p>
+          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs text-amber-800">
+            {warnings.map((warning, index) => (
+              <li key={index}>
+                {typeof warning.row === 'number' && warning.row > 0
+                  ? `Row ${warning.row}: `
+                  : ''}
+                {warning.message}
               </li>
             ))}
           </ul>

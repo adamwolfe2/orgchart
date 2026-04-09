@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parseEmployeeCsv, type HeaderMapping } from '@/lib/csv'
+import { parseEmployeeCsv, type CsvIssue, type HeaderMapping } from '@/lib/csv'
 import { embedTexts, employeeSourceText } from '@/lib/embeddings'
 import type { ApiResponse } from '@/lib/types'
 
@@ -10,10 +10,13 @@ const MAX_CSV_BYTES = 5 * 1024 * 1024 // 5MB
 interface UploadResultData {
   count: number
   headerMappings: HeaderMapping[]
+  warnings: CsvIssue[]
+  unmappedHeaders: string[]
 }
 
 interface UploadValidationError extends ApiResponse<never> {
-  errors: Array<{ row: number; message: string }>
+  errors: CsvIssue[]
+  warnings?: CsvIssue[]
   headerMappings?: HeaderMapping[]
   unmappedHeaders?: string[]
   missingRequired?: string[]
@@ -77,12 +80,14 @@ export async function POST(request: Request) {
     const csvText = await fileField.text()
     const result = parseEmployeeCsv(csvText)
 
+    // Hard errors block the upload: missing required headers, no parseable rows.
     if (result.errors.length > 0) {
       return NextResponse.json<UploadValidationError>(
         {
           success: false,
           error: 'validation',
           errors: result.errors,
+          warnings: result.warnings,
           headerMappings: result.headerMappings,
           unmappedHeaders: result.unmappedHeaders,
           missingRequired: result.missingRequired,
@@ -97,6 +102,7 @@ export async function POST(request: Request) {
           success: false,
           error: 'empty CSV',
           errors: [],
+          warnings: result.warnings,
           headerMappings: result.headerMappings,
           unmappedHeaders: result.unmappedHeaders,
         },
@@ -165,6 +171,8 @@ export async function POST(request: Request) {
       data: {
         count: inserted.length,
         headerMappings: result.headerMappings,
+        warnings: result.warnings,
+        unmappedHeaders: result.unmappedHeaders,
       },
     })
   } catch (err) {
