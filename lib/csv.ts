@@ -219,6 +219,24 @@ export interface CsvIssue {
   message: string
 }
 
+/**
+ * Structured record of a supervisor value the local fuzzy matcher
+ * could not confidently resolve. Surfaced so callers (the API route
+ * with LLM fallback enabled) can batch these to an LLM for a second
+ * pass, instead of parsing fragile warning strings.
+ */
+export interface UnresolvedSupervisor {
+  row_index: number
+  line: number
+  raw_value: string
+  /** Top candidates from the local staged employee list, ranked by fuzzy score. */
+  candidates: Array<{
+    email: string
+    first_name: string
+    last_name: string
+  }>
+}
+
 export interface CsvParseResult {
   rows: CsvRow[]
   /** Hard errors that block the upload: missing required headers, empty file, etc. */
@@ -228,6 +246,31 @@ export interface CsvParseResult {
   headerMappings: HeaderMapping[]
   unmappedHeaders: string[]
   missingRequired: CanonicalField[]
+  /** Supervisors the local fuzzy matcher couldn't resolve — for LLM fallback. */
+  unresolvedSupervisors: UnresolvedSupervisor[]
+  /** Raw headers as read from the detected header row. Exposed for LLM fallback context. */
+  rawHeaders: string[]
+  /** First 5 data rows from the parsed CSV. Exposed for LLM fallback context. */
+  sampleRows: string[][]
+}
+
+/**
+ * Optional overrides for header detection. Used by the LLM fallback
+ * flow: if local matching misses a required field, the API route
+ * calls an LLM, gets back high-confidence mappings, and re-runs
+ * parseEmployeeCsv with those mappings pinned.
+ *
+ * Keys are normalized raw headers (via internal normalize()); values
+ * are canonical field names as strings. Invalid values are silently
+ * ignored (falls through to local matching).
+ */
+export interface ParseOptions {
+  headerOverrides?: Record<string, string>
+}
+
+/** Runtime guard: is a string one of the canonical field values? */
+function isCanonicalField(v: string): v is CanonicalField {
+  return (CANONICAL_FIELDS as readonly string[]).includes(v)
 }
 
 /**
@@ -475,7 +518,10 @@ function detectAndBreakCycles(rows: CsvRow[]): Array<[string, string]> {
 /**
  * Parse a CSV string into validated employee rows.
  */
-export function parseEmployeeCsv(csvText: string): CsvParseResult {
+export function parseEmployeeCsv(
+  csvText: string,
+  options: ParseOptions = {},
+): CsvParseResult {
   // Strip UTF-8 BOM on the whole file
   const input = csvText.replace(/^\uFEFF/, '')
 
@@ -487,12 +533,18 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
 
   const headerIdx = findHeaderRow(allRows)
   const rawHeaders = allRows[headerIdx] ?? []
+  const sampleRows = allRows.slice(headerIdx + 1, headerIdx + 6)
 
   // Build per-column mapping, first-seen-wins for duplicate canonicals.
+  // Header overrides take precedence over local matching when provided.
   const claimedFields = new Set<CanonicalField>()
   const fieldToCol = new Map<CanonicalField, number>()
+  const overrides = options.headerOverrides ?? {}
   const headerMappings: HeaderMapping[] = rawHeaders.map((raw, colIdx) => {
-    const canonical = matchHeader(raw ?? '')
+    const normRaw = normalize(raw ?? '')
+    const overrideRaw = overrides[normRaw]
+    const override = overrideRaw && isCanonicalField(overrideRaw) ? overrideRaw : undefined
+    const canonical = override ?? matchHeader(raw ?? '')
     if (canonical && !claimedFields.has(canonical)) {
       claimedFields.add(canonical)
       fieldToCol.set(canonical, colIdx)
@@ -529,6 +581,9 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
       headerMappings,
       unmappedHeaders,
       missingRequired,
+      unresolvedSupervisors: [],
+      rawHeaders,
+      sampleRows,
     }
   }
 
@@ -650,11 +705,20 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
       headerMappings,
       unmappedHeaders,
       missingRequired,
+      unresolvedSupervisors: [],
+      rawHeaders,
+      sampleRows,
     }
   }
 
-  // Resolve supervisor values
-  const rows: CsvRow[] = staged.map((s) => {
+  // Resolve supervisor values. Any row where local fuzzy matching
+  // comes up empty is pushed into unresolvedSupervisors with a top-5
+  // candidate shortlist (ranked by Levenshtein distance on normalized
+  // full name). The API route can then batch these to an LLM if the
+  // fallback flag is on.
+  const unresolvedSupervisors: UnresolvedSupervisor[] = []
+
+  const rows: CsvRow[] = staged.map((s, stagedIdx) => {
     const base: CsvRow = {
       first_name: s.first_name,
       last_name: s.last_name,
@@ -679,6 +743,32 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
       })
       return base
     }
+
+    // Unresolved — build candidate shortlist for LLM fallback.
+    const rawNorm = normalize(s.supervisorRaw)
+    const scored = staged
+      .filter((cand) => cand.email !== s.email)
+      .map((cand) => ({
+        cand,
+        dist: levenshtein(
+          rawNorm,
+          normalize(cand.first_name) + normalize(cand.last_name),
+        ),
+      }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 5)
+      .map((s) => ({
+        email: s.cand.email,
+        first_name: s.cand.first_name,
+        last_name: s.cand.last_name,
+      }))
+
+    unresolvedSupervisors.push({
+      row_index: stagedIdx,
+      line: s.line,
+      raw_value: s.supervisorRaw,
+      candidates: scored,
+    })
 
     warnings.push({
       row: s.line,
@@ -731,6 +821,9 @@ export function parseEmployeeCsv(csvText: string): CsvParseResult {
     headerMappings,
     unmappedHeaders,
     missingRequired,
+    unresolvedSupervisors,
+    rawHeaders,
+    sampleRows,
   }
 }
 

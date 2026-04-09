@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server'
 import { getCurrentUserAndMembership } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { parseEmployeeCsv, type CsvIssue, type HeaderMapping } from '@/lib/csv'
+import {
+  parseEmployeeCsv,
+  type CsvIssue,
+  type CsvParseResult,
+  type HeaderMapping,
+} from '@/lib/csv'
+import {
+  isLlmEnabled,
+  llmResolveHeaders,
+  llmResolveSupervisors,
+} from '@/lib/csv/llm'
 import type { ApiResponse } from '@/lib/types'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024 // 5MB
@@ -81,7 +91,8 @@ export async function POST(request: Request) {
     }
 
     const csvText = await fileField.text()
-    const result = parseEmployeeCsv(csvText)
+    let result = parseEmployeeCsv(csvText)
+    result = await applyLlmFallbacks(csvText, result)
 
     if (result.errors.length > 0) {
       return NextResponse.json<UploadValidationError>(
@@ -164,4 +175,135 @@ export async function POST(request: Request) {
       { status: 500 },
     )
   }
+}
+
+/**
+ * Optional LLM fallback pass. Runs only when CSV_LLM_ENABLED=true.
+ *
+ * Two opportunities:
+ *   1. If the local parse returned hard errors because of missing
+ *      required headers, call llmResolveHeaders() with the raw headers
+ *      + sample rows. If the LLM returns high-confidence mappings that
+ *      cover the missing fields, re-parse with those overrides pinned.
+ *
+ *   2. If the local parse succeeded but left unresolved supervisors,
+ *      batch them to llmResolveSupervisors() with pre-ranked candidate
+ *      shortlists. Patch the result rows with any high/medium confidence
+ *      resolutions the LLM returns (validated against the allowed email
+ *      set — the LLM cannot invent emails).
+ *
+ * Every failure mode degrades silently to the local-only result. The
+ * upload flow is never blocked on the LLM.
+ */
+async function applyLlmFallbacks(
+  csvText: string,
+  result: CsvParseResult,
+): Promise<CsvParseResult> {
+  if (!isLlmEnabled()) return result
+
+  // Opportunity 1: fix missing headers
+  if (result.errors.length > 0 && result.missingRequired.length > 0) {
+    try {
+      const llmHeaders = await llmResolveHeaders(
+        result.rawHeaders,
+        result.sampleRows,
+      )
+      if (llmHeaders) {
+        // Build overrides keyed by normalized raw header, accepting only
+        // high-confidence mappings (per plan — medium is flagged but not
+        // auto-applied at v1).
+        const overrides: Record<string, string> = {}
+        for (const mapping of llmHeaders.mappings) {
+          if (mapping.canonical === 'none') continue
+          if (mapping.confidence !== 'high') continue
+          const key = mapping.raw_header
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/\p{Diacritic}/gu, '')
+            .replace(/[^a-z0-9]/g, '')
+          overrides[key] = mapping.canonical
+        }
+
+        if (Object.keys(overrides).length > 0) {
+          const reparsed = parseEmployeeCsv(csvText, {
+            headerOverrides: overrides,
+          })
+          if (reparsed.errors.length === 0) {
+            // LLM fix worked — replace the result and continue to phase 2
+            result = reparsed
+            result.warnings = [
+              ...result.warnings,
+              {
+                row: 0,
+                message:
+                  'AI fallback was used to map column headers that could not be auto-detected',
+              },
+            ]
+          }
+        }
+      }
+    } catch (err) {
+      console.error('LLM header fallback failed (non-fatal):', err)
+    }
+  }
+
+  // Opportunity 2: resolve unresolved supervisors
+  if (result.unresolvedSupervisors.length > 0 && result.rows.length > 0) {
+    try {
+      const llmSupervisors = await llmResolveSupervisors(
+        result.unresolvedSupervisors.map((u) => ({
+          row_index: u.row_index,
+          raw_value: u.raw_value,
+          candidates: u.candidates,
+        })),
+      )
+      if (llmSupervisors && llmSupervisors.resolutions.length > 0) {
+        const allowedEmails = new Set(result.rows.map((r) => r.email))
+        const unresolvedByIndex = new Map(
+          result.unresolvedSupervisors.map((u) => [u.row_index, u]),
+        )
+        const resolvedCount = { n: 0 }
+
+        // Patch result.rows with LLM resolutions (in-place construction
+        // of a new array to stay immutable). Only apply if the returned
+        // email is in the allowed set AND confidence is high or medium.
+        const patchedRows = [...result.rows]
+        for (const resolution of llmSupervisors.resolutions) {
+          const unresolved = unresolvedByIndex.get(resolution.row_index)
+          if (!unresolved) continue
+          if (!resolution.resolved_email) continue
+          if (resolution.confidence === 'low') continue
+          if (!allowedEmails.has(resolution.resolved_email)) continue
+
+          const row = patchedRows[resolution.row_index]
+          if (!row) continue
+          if (resolution.resolved_email === row.email) continue
+
+          patchedRows[resolution.row_index] = {
+            ...row,
+            supervisor_email: resolution.resolved_email,
+          }
+          resolvedCount.n++
+        }
+
+        if (resolvedCount.n > 0) {
+          result = {
+            ...result,
+            rows: patchedRows,
+            warnings: [
+              ...result.warnings,
+              {
+                row: 0,
+                message: `AI fallback resolved ${resolvedCount.n} supervisor name${resolvedCount.n === 1 ? '' : 's'} that local fuzzy matching could not`,
+              },
+            ],
+          }
+        }
+      }
+    } catch (err) {
+      console.error('LLM supervisor fallback failed (non-fatal):', err)
+    }
+  }
+
+  return result
 }
