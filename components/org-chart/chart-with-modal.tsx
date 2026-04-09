@@ -12,15 +12,19 @@ interface ChartWithModalProps {
   employeesById: Record<string, Employee>
   initialMessages: ChatMessage[]
   organizationName: string
+  isAdmin?: boolean
 }
 
 export function ChartWithModal({
   roots,
-  employeesById,
+  employeesById: initialById,
   initialMessages,
   organizationName,
+  isAdmin,
 }: ChartWithModalProps) {
   const [selected, setSelected] = useState<Employee | null>(null)
+  // Local copy so edits reflect immediately without a full page reload
+  const [employeesById, setEmployeesById] = useState<Record<string, Employee>>(initialById)
   const flowRef = useRef<FlowChartHandle>(null)
 
   function handleEmployeeClick(employeeId: string) {
@@ -29,6 +33,11 @@ export function ChartWithModal({
       setSelected(emp)
       flowRef.current?.focusEmployee(employeeId)
     }
+  }
+
+  function handleEmployeeUpdate(updated: Employee) {
+    setEmployeesById((prev) => ({ ...prev, [updated.id]: updated }))
+    setSelected((prev) => (prev?.id === updated.id ? updated : prev))
   }
 
   return (
@@ -54,6 +63,8 @@ export function ChartWithModal({
         employee={selected}
         employeesById={employeesById}
         onClose={() => setSelected(null)}
+        isAdmin={isAdmin}
+        onEmployeeUpdate={handleEmployeeUpdate}
       />
     </>
   )

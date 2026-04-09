@@ -35,6 +35,13 @@ export function ChartHeaderClient({
         </div>
         <div className="flex items-center gap-2">
           {isAdmin ? (
+            <Link href="/chart/roster">
+              <Button variant="ghost" size="sm">
+                Roster
+              </Button>
+            </Link>
+          ) : null}
+          {isAdmin ? (
             <Button
               variant="outline"
               size="sm"

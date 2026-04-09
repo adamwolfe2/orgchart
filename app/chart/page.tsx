@@ -83,6 +83,7 @@ export default async function ChartPage() {
           employeesById={employeesById}
           initialMessages={initialMessages}
           organizationName={organization.name}
+          isAdmin={isAdmin}
         />
       )}
     </main>
