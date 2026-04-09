@@ -170,6 +170,13 @@ export function matchHeader(rawHeader: string): CanonicalField | null {
 
   if (NORMALIZED_ALIASES[norm]) return NORMALIZED_ALIASES[norm]
 
+  // Substring-containment fuzziness: only fire when both the normalized
+  // input AND the alias are long enough to carry real signal. Otherwise
+  // degenerate single-char inputs ('a', 'b', 'c') match long aliases
+  // like 'emailaddress' by coincidental letter containment and poison
+  // header detection.
+  if (norm.length < 3) return null
+
   let bestField: CanonicalField | null = null
   let bestLen = 0
 
