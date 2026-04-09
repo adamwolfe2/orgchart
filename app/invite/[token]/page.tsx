@@ -48,26 +48,28 @@ export default async function InvitePage({ params }: PageProps) {
   const adminClient = createAdminClient()
   const { data: row } = await adminClient
     .from('organization_invites')
-    .select('*, organizations!inner(id, name, logo_url, primary_color)')
+    .select(
+      'id, organization_id, token, created_by, max_uses, used_count, expires_at, revoked_at, created_at, organizations!inner(id, name, logo_url, primary_color)',
+    )
     .eq('token', token)
     .maybeSingle()
 
   const invite = row as InviteWithOrg | null
 
+  // Generic reason for all invalid states — don't disclose why the invite
+  // is invalid to prevent token enumeration / information disclosure.
+  const genericReason = 'This invite link is no longer valid. Please ask your admin for a new one.'
+
   if (!invite) {
-    return <InvalidInvitePage reason="This invite link does not exist or has been removed." />
+    return <InvalidInvitePage reason={genericReason} />
   }
 
-  if (invite.revoked_at) {
-    return <InvalidInvitePage reason="This invite link has been revoked by an administrator." />
-  }
+  const isRevoked = Boolean(invite.revoked_at)
+  const isExpired = invite.expires_at && new Date(invite.expires_at) < new Date()
+  const isMaxed = invite.max_uses !== null && invite.used_count >= invite.max_uses
 
-  if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-    return <InvalidInvitePage reason="This invite link has expired." />
-  }
-
-  if (invite.max_uses !== null && invite.used_count >= invite.max_uses) {
-    return <InvalidInvitePage reason="This invite link has reached its maximum number of uses." />
+  if (isRevoked || isExpired || isMaxed) {
+    return <InvalidInvitePage reason={genericReason} />
   }
 
   // Check if the current visitor is authenticated

@@ -1,6 +1,11 @@
 import { createClient } from './supabase/server'
 import type { Role } from './types'
 
+/** Check if a role has admin-level access (owner or admin). */
+export function isAdmin(role: string): boolean {
+  return role === 'owner' || role === 'admin'
+}
+
 /**
  * Auth helper used by API route handlers.
  *

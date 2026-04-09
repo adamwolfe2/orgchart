@@ -79,12 +79,13 @@ export async function POST(request: Request) {
       )
     }
 
+    // 4b. Soft check — actual enforcement happens atomically below
     if (
       invite.max_uses !== null &&
       invite.used_count >= invite.max_uses
     ) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: 'this invite has reached its maximum uses' },
+        { success: false, error: 'invite no longer valid' },
         { status: 410 },
       )
     }
@@ -97,7 +98,25 @@ export async function POST(request: Request) {
       })
     }
 
-    // 6. Insert membership row (RLS-bound server client)
+    // 6. Atomically increment used_count BEFORE inserting membership.
+    //    The WHERE clause gates on used_count < max_uses (or unlimited when
+    //    max_uses is null). If 0 rows are returned, the invite is exhausted.
+    const { data: claimed, error: claimError } = await adminClient
+      .from('organization_invites')
+      .update({ used_count: (invite.used_count as number) + 1 })
+      .eq('id', invite.id)
+      .or(`max_uses.is.null,used_count.lt.${invite.max_uses ?? 999999999}`)
+      .is('revoked_at', null)
+      .select('id')
+
+    if (claimError || !claimed || claimed.length === 0) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: 'invite no longer valid' },
+        { status: 410 },
+      )
+    }
+
+    // 7. Insert membership row (RLS-bound server client)
     const supabase = await createClient()
     const { error: membershipError } = await supabase
       .from('memberships')
@@ -116,37 +135,20 @@ export async function POST(request: Request) {
         })
       }
 
+      // Rollback the used_count increment — best-effort
+      try {
+        await adminClient
+          .from('organization_invites')
+          .update({ used_count: invite.used_count })
+          .eq('id', invite.id)
+      } catch {
+        // swallow rollback errors
+      }
+
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: 'failed to join organization' },
         { status: 500 },
       )
-    }
-
-    // 7. Increment used_count with optimistic concurrency (admin client)
-    //    Try to update where used_count = current value. If another request
-    //    raced us, retry once with the new count.
-    const currentCount = invite.used_count as number
-    const { data: updatedRows } = await adminClient
-      .from('organization_invites')
-      .update({ used_count: currentCount + 1 })
-      .eq('id', invite.id)
-      .eq('used_count', currentCount)
-      .select('id')
-
-    if (!updatedRows || updatedRows.length === 0) {
-      // Retry once — fetch fresh count and try again
-      const { data: fresh } = await adminClient
-        .from('organization_invites')
-        .select('used_count')
-        .eq('id', invite.id)
-        .single()
-
-      if (fresh) {
-        await adminClient
-          .from('organization_invites')
-          .update({ used_count: (fresh.used_count as number) + 1 })
-          .eq('id', invite.id)
-      }
     }
 
     return NextResponse.json<ApiResponse<{ organization_id: string }>>({

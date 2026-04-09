@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { getCurrentUserAndMembership } from '@/lib/auth'
+import { getCurrentUserAndMembership, isAdmin } from '@/lib/auth'
 import { generateInviteToken, listInvitesForOrg } from '@/lib/invites'
 import { createClient } from '@/lib/supabase/server'
 import type { ApiResponse, OrganizationInvite } from '@/lib/types'
@@ -19,10 +19,6 @@ const createInviteSchema = z.object({
     .max(365, 'expires_in_days cannot exceed 365')
     .optional(),
 })
-
-function isAdmin(role: string) {
-  return role === 'owner' || role === 'admin'
-}
 
 /**
  * POST /api/org/invites

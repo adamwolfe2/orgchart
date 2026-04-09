@@ -37,9 +37,9 @@ export async function PATCH(request: Request) {
 
     const { position, context, linkedin_url, phone, custom_links } = parsed.data
 
-    // headshot_url may be passed separately from the headshot upload step
-    const headshotUrl: string | undefined =
-      typeof rawBody?.headshot_url === 'string' ? rawBody.headshot_url : undefined
+    // headshot_url is ONLY set by the /api/profile/headshot upload route.
+    // We do not accept it from the PATCH body to prevent stored XSS
+    // via arbitrary URLs.
 
     // 3. Look up the claimed employee for this user
     const supabase = await createClient()
@@ -56,8 +56,9 @@ export async function PATCH(request: Request) {
       )
     }
 
-    // 4. Build the update payload with explicit fields only
-    const updatePayload: Record<string, unknown> = {
+    // 4. Build the update payload with explicit fields only.
+    // headshot_url deliberately excluded — only the upload route sets it.
+    const updatePayload = {
       position: position ?? null,
       context: context ?? null,
       linkedin_url: linkedin_url ?? null,
@@ -65,16 +66,14 @@ export async function PATCH(request: Request) {
       custom_links: custom_links ?? [],
     }
 
-    if (headshotUrl !== undefined) {
-      updatePayload.headshot_url = headshotUrl
-    }
-
     // 5. Perform the update (RLS employees_self_update allows this)
     const { data: updated, error: updateError } = await supabase
       .from('employees')
       .update(updatePayload)
       .eq('id', employee.id)
-      .select('*')
+      .select(
+        'id, organization_id, first_name, last_name, email, position, supervisor_email, context, headshot_url, linkedin_url, phone, custom_links, slack_user_id, claimed_by_user_id, created_at, updated_at',
+      )
       .single()
 
     if (updateError || !updated) {

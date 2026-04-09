@@ -77,7 +77,9 @@ export async function getProfileForCurrentUser(): Promise<ProfileData | null> {
 
   const { data: employee, error } = await supabase
     .from('employees')
-    .select('*')
+    .select(
+      'id, organization_id, first_name, last_name, email, position, supervisor_email, context, headshot_url, linkedin_url, phone, custom_links, slack_user_id, claimed_by_user_id, created_at, updated_at',
+    )
     .eq('claimed_by_user_id', auth.user.id)
     .maybeSingle()
 

@@ -56,6 +56,7 @@ export async function POST(request: Request) {
       .from('chat_messages')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', user.id)
+      .eq('organization_id', membership.organization_id)
       .eq('role', 'user')
       .gte('created_at', windowStart)
 

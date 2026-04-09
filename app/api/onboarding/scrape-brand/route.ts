@@ -1,17 +1,16 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { getCurrentUserAndMembership } from '@/lib/auth'
+import { getCurrentUserAndMembership, isAdmin } from '@/lib/auth'
 import { extractBrand } from '@/lib/firecrawl'
 import type { ApiResponse, BrandExtractionResult } from '@/lib/types'
 
 const bodySchema = z.object({
-  website_url: z.string().url('website_url must be a valid URL'),
+  website_url: z
+    .string()
+    .url('website_url must be a valid URL')
+    .refine((v) => v.startsWith('https://'), 'website_url must use https'),
 })
-
-function isAdmin(role: string) {
-  return role === 'owner' || role === 'admin'
-}
 
 /**
  * POST /api/onboarding/scrape-brand

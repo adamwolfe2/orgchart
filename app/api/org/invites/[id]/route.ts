@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server'
 
-import { getCurrentUserAndMembership } from '@/lib/auth'
+import { getCurrentUserAndMembership, isAdmin } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import type { ApiResponse } from '@/lib/types'
-
-function isAdmin(role: string) {
-  return role === 'owner' || role === 'admin'
-}
 
 /**
  * DELETE /api/org/invites/[id]

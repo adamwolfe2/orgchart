@@ -51,9 +51,13 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   return response.data.map((d) => d.embedding)
 }
 
-/** Embed a single text. Convenience wrapper. */
+/** Embed a single text. Convenience wrapper. Throws if OpenAI returns no data. */
 export async function embedText(text: string): Promise<number[]> {
-  const [embedding] = await embedTexts([text])
+  const results = await embedTexts([text])
+  const embedding = results[0]
+  if (!embedding) {
+    throw new Error('embedText: OpenAI returned no embedding data')
+  }
   return embedding
 }
 
