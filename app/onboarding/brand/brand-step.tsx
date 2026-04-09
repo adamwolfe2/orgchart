@@ -12,6 +12,9 @@ const DEFAULT_PRIMARY = '#0f172a'
 const DEFAULT_SECONDARY = '#64748b'
 const DEFAULT_ACCENT = '#3b82f6'
 
+const ALLOWED_LOGO_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']
+const MAX_LOGO_BYTES = 2 * 1024 * 1024
+
 interface ColorFieldProps {
   label: string
   name: string
@@ -61,11 +64,14 @@ interface BrandStepProps {
 export function BrandStep({ organization }: BrandStepProps) {
   const [loading, setLoading] = useState(true)
   const [logoUrl, setLogoUrl] = useState(organization.logo_url ?? '')
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoError, setLogoError] = useState<string | null>(null)
   const [primary, setPrimary] = useState(organization.primary_color || DEFAULT_PRIMARY)
   const [secondary, setSecondary] = useState(
     organization.secondary_color || DEFAULT_SECONDARY,
   )
   const [accent, setAccent] = useState(organization.accent_color || DEFAULT_ACCENT)
+  const logoInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!organization.website_url) {
@@ -111,6 +117,49 @@ export function BrandStep({ organization }: BrandStepProps) {
     }
   }, [organization.website_url])
 
+  async function handleLogoFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    setLogoError(null)
+
+    if (!file) return
+
+    if (!ALLOWED_LOGO_TYPES.includes(file.type)) {
+      setLogoError('Logo must be jpeg, png, webp, svg, or gif.')
+      return
+    }
+
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoError('Logo must be 2 MB or smaller.')
+      return
+    }
+
+    setLogoUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch('/api/org/logo', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const json = (await res.json()) as { success: boolean; data?: { logo_url: string }; error?: string }
+
+      if (!res.ok || !json.success) {
+        setLogoError(json.error ?? 'Failed to upload logo.')
+        return
+      }
+
+      setLogoUrl(json.data!.logo_url)
+    } catch {
+      setLogoError('Failed to upload logo. Please try again.')
+    } finally {
+      setLogoUploading(false)
+      // Reset file input so the same file can be reselected if needed
+      if (logoInputRef.current) logoInputRef.current.value = ''
+    }
+  }
+
   return (
     <div className="space-y-6">
       {loading && (
@@ -122,7 +171,6 @@ export function BrandStep({ organization }: BrandStepProps) {
       {!loading && (
         <form
           action={async (formData) => {
-            // Pass the current state values into the form before submitting
             formData.set('logo_url', logoUrl)
             formData.set('primary_color', primary)
             formData.set('secondary_color', secondary)
@@ -131,30 +179,48 @@ export function BrandStep({ organization }: BrandStepProps) {
           }}
           className="space-y-6"
         >
-          {/* Logo preview + URL input */}
+          {/* Logo upload */}
           <div className="space-y-2">
-            <Label htmlFor="logo_url">Logo URL</Label>
-            {logoUrl && (
-              <div className="flex items-center gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+            <Label>Logo</Label>
+            <div className="flex items-center gap-4">
+              {logoUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
                 <img
                   src={logoUrl}
                   alt="Organization logo preview"
-                  className="h-10 w-10 rounded object-contain"
+                  className="h-12 w-12 rounded object-contain ring-1 ring-slate-200"
                   onError={(e) => {
                     ;(e.currentTarget as HTMLImageElement).style.display = 'none'
                   }}
                 />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded bg-slate-100 text-xs text-slate-400">
+                  No logo
+                </div>
+              )}
+              <div className="space-y-1">
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif"
+                  className="hidden"
+                  onChange={handleLogoFile}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={logoUploading}
+                  onClick={() => logoInputRef.current?.click()}
+                >
+                  {logoUploading ? 'Uploading...' : 'Upload logo'}
+                </Button>
+                <p className="text-xs text-slate-400">jpeg, png, webp, svg or gif — max 2 MB</p>
               </div>
-            )}
-            <Input
-              id="logo_url"
-              name="logo_url"
-              type="url"
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              placeholder="https://example.com/logo.png"
-            />
+            </div>
+            {logoError ? (
+              <p className="text-xs text-red-500">{logoError}</p>
+            ) : null}
           </div>
 
           {/* Color swatches */}
