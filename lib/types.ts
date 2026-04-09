@@ -74,6 +74,21 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+/** An admin-generated join link for an organization. */
+export interface OrganizationInvite {
+  id: string
+  organization_id: string
+  token: string
+  created_by: string | null
+  /** null = unlimited uses */
+  max_uses: number | null
+  used_count: number
+  /** null = no expiration */
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
 /** An employee reference stored in chat_messages.sources jsonb. */
 export interface ChatSource {
   id: string

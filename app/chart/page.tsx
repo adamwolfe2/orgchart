@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
-import { Logo } from '@/components/brand/logo'
+import { ChartHeaderClient } from '@/components/chart/chart-header-client'
 import { ChartWithModal } from '@/components/org-chart/chart-with-modal'
 import { Button } from '@/components/ui/button'
 import { getCurrentUserAndMembership } from '@/lib/auth'
@@ -56,31 +56,16 @@ export default async function ChartPage() {
 
   const hasClaimedEmployee = Boolean(claimedEmployee)
 
+  const isAdmin =
+    auth.membership.role === 'owner' || auth.membership.role === 'admin'
+
   return (
     <main className="min-h-screen bg-white">
-      <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <Logo size="sm" showWordmark={false} href="/chart" />
-          <div className="h-6 w-px bg-slate-200" aria-hidden="true" />
-          <h1 className="text-sm font-semibold text-slate-900">
-            {organization.name}
-          </h1>
-        </div>
-        <div className="flex items-center gap-2">
-          {hasClaimedEmployee ? (
-            <Link href="/profile">
-              <Button variant="ghost" size="sm">
-                My profile
-              </Button>
-            </Link>
-          ) : null}
-          <form action="/auth/signout" method="post">
-            <Button type="submit" variant="ghost" size="sm">
-              Sign out
-            </Button>
-          </form>
-        </div>
-      </header>
+      <ChartHeaderClient
+        organizationName={organization.name}
+        isAdmin={isAdmin}
+        hasClaimedEmployee={hasClaimedEmployee}
+      />
 
       {roots.length === 0 ? (
         <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
