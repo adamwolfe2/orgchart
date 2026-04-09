@@ -37,10 +37,10 @@ const NODE_HEIGHT = 90
 // Grid layout constants
 const GRID_THRESHOLD = 4   // ≥ this many leaf siblings → use grid
 const MAX_COLS = 5
-const H_GAP = 12           // horizontal gap between grid cells
-const V_GAP = 16           // vertical gap between grid rows
-const GRID_PAD = 16        // padding inside the group box
-const GROUP_PAD = 20       // padding around dagre-positioned groups
+const H_GAP = 20           // horizontal gap between grid cells
+const V_GAP = 28           // vertical gap between grid rows
+const GRID_PAD = 20        // padding inside the group box
+const GROUP_PAD = 32       // padding around dagre-positioned groups
 
 const nodeTypes: NodeTypes = { employee: EmployeeFlowNode as NodeTypes['employee'] }
 
@@ -80,7 +80,7 @@ function gridDimensions(n: number): { cols: number; gridWidth: number; gridHeigh
 function buildLayout(roots: EmployeeNode[]): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'TB', ranksep: 100, nodesep: 32, marginx: 60, marginy: 60 })
+  g.setGraph({ rankdir: 'TB', ranksep: 140, nodesep: 56, marginx: 80, marginy: 80 })
 
   // All non-leaf employees (will become React Flow nodes via dagre positions)
   const dagreEmployees = new Map<string, EmployeeNode>()
@@ -213,18 +213,21 @@ function buildLayout(roots: EmployeeNode[]): { nodes: Node[]; edges: Edge[] } {
     })
   }
 
-  // ── 3. Group boxes for dagre-positioned children ─────────────────────────
-  for (const [id, emp] of dagreEmployees) {
-    // Find children that went through dagre (small leaves + branch children)
-    const branchChildren = emp.reports.filter((r) => r.reports.length > 0)
-    const smallLeafChildren = gridGroups.has(id)
-      ? []  // all leaves were gridded; branches handled separately
-      : emp.reports.filter((r) => r.reports.length === 0)
-    const dagreChildren = [...branchChildren, ...smallLeafChildren]
+  // ── 3. Group boxes for small leaf sibling groups only ───────────────────
+  // Branch children (managers with their own teams) are intentionally excluded:
+  // they each appear as standalone nodes connected by edges, with their own
+  // sub-group boxes drawn at their level. Lumping them in here would visually
+  // trap a manager (e.g. Thomas) in the same box as individual contributors.
+  for (const [id] of dagreEmployees) {
+    const emp = dagreEmployees.get(id)!
+    // Only draw a group box when there are small leaf children (below grid threshold)
+    // and none of them are branch managers.
+    if (gridGroups.has(id)) continue  // all leaves were gridded; nothing to box here
 
-    if (dagreChildren.length === 0) continue
+    const smallLeafChildren = emp.reports.filter((r) => r.reports.length === 0)
+    if (smallLeafChildren.length < 2) continue  // 0 or 1 leaf — no box needed
 
-    const positions = dagreChildren.map((r) => g.node(r.id)).filter(Boolean)
+    const positions = smallLeafChildren.map((r) => g.node(r.id)).filter(Boolean)
     if (positions.length === 0) continue
 
     const minX = Math.min(...positions.map((p) => p.x - NODE_WIDTH / 2)) - GROUP_PAD
