@@ -1,7 +1,12 @@
 import type { MetadataRoute } from 'next'
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? 'https://orgchart.aimanagingservices.com'
+function toAbsoluteUrl(raw: string): string {
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw
+  return `https://${raw}`
+}
+const APP_URL = toAbsoluteUrl(
+  process.env.NEXT_PUBLIC_APP_URL ?? 'orgchart.aimanagingservices.com',
+)
 
 /**
  * Robots policy. Marketing surfaces are crawlable. Every authed
