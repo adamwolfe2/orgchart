@@ -31,21 +31,12 @@ export function validateHexColor(value: unknown): string | null {
 
 /**
  * Resolve a logo URL from Firecrawl metadata, falling back to /favicon.ico.
+ * Intentionally does NOT use ogImage — that is a social sharing card, not a logo.
  */
 export function resolveLogoUrl(
   metadata: Record<string, unknown>,
   websiteUrl: string,
 ): string {
-  const candidates = [metadata.ogImage, metadata['og:image']]
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      return candidate
-    }
-    if (Array.isArray(candidate) && typeof candidate[0] === 'string' && candidate[0].length > 0) {
-      return candidate[0] as string
-    }
-  }
-  // Strip trailing slash before appending
   const base = websiteUrl.replace(/\/+$/, '')
   return `${base}/favicon.ico`
 }
@@ -103,36 +94,93 @@ async function scrape(url: string): Promise<{
 }
 
 /**
- * Try to extract the actual logo URL from HTML.
- * Looks for common logo patterns before falling back to OG image.
+ * Resolve a relative or protocol-relative URL against a base.
  */
-function extractLogoFromHtml(html: string, baseUrl: string): string | null {
-  if (!html) return null
+function toAbsolute(src: string, base: string): string {
+  if (src.startsWith('http')) return src
+  if (src.startsWith('//')) return `https:${src}`
+  if (src.startsWith('/')) return `${base}${src}`
+  return `${base}/${src}`
+}
 
-  // Patterns ordered by specificity
-  const patterns: RegExp[] = [
-    // <img ... class/id containing "logo" ...>
-    /<img[^>]+(?:class|id)=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
-    /<img[^>]+src=["']([^"']+)["'][^>]+(?:class|id)=["'][^"']*logo[^"']*["']/gi,
-    // <img alt="logo" or alt contains org name>
-    /<img[^>]+alt=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
-    /<img[^>]+src=["']([^"']+)["'][^>]+alt=["'][^"']*logo[^"']*["']/gi,
-    // SVG href patterns (linked logos)
-    /<use[^>]+href=["']([^"']+\.svg[^"']*)["']/gi,
-  ]
+/**
+ * Try to extract the actual logo URL from HTML.
+ *
+ * Priority chain (highest → lowest quality):
+ *  1. JSON-LD Organization.logo — most authoritative, official logo
+ *  2. <link rel="apple-touch-icon"> — actual app icon, usually high-res
+ *  3. <link rel="icon"> with png/svg — actual favicon with file extension
+ *  4. <img> inside <header>/<nav> with logo class/id/alt
+ *  5. <img> anywhere with logo class/id/alt
+ *
+ * Intentionally excludes ogImage — that is a social sharing card.
+ */
+export function extractLogoFromHtml(html: string, baseUrl: string): string | null {
+  if (!html) return null
 
   const base = baseUrl.replace(/\/+$/, '')
 
-  for (const pattern of patterns) {
+  // 1. JSON-LD Organization logo
+  const jsonLdMatches = html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
+  for (const jm of jsonLdMatches) {
+    try {
+      const data = JSON.parse(jm[1]) as Record<string, unknown>
+      // Handle both single objects and arrays
+      const items: Record<string, unknown>[] = Array.isArray(data) ? data : [data]
+      for (const item of items) {
+        if (
+          item['@type'] === 'Organization' ||
+          item['@type'] === 'WebSite'
+        ) {
+          const logo = item.logo
+          if (typeof logo === 'string' && logo.length > 0) return toAbsolute(logo, base)
+          if (logo && typeof logo === 'object') {
+            const logoObj = logo as Record<string, unknown>
+            if (typeof logoObj.url === 'string') return toAbsolute(logoObj.url, base)
+            if (typeof logoObj.contentUrl === 'string') return toAbsolute(logoObj.contentUrl, base)
+          }
+        }
+      }
+    } catch {
+      // malformed JSON-LD — skip
+    }
+  }
+
+  // 2. <link rel="apple-touch-icon"> — typically 180×180, best quality icon
+  const appleIcon = /<link[^>]+rel=["'][^"']*apple-touch-icon[^"']*["'][^>]+href=["']([^"']+)["']/i.exec(html)
+    ?? /<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*apple-touch-icon[^"']*["']/i.exec(html)
+  if (appleIcon?.[1]) return toAbsolute(appleIcon[1], base)
+
+  // 3. <link rel="icon"> with explicit png or svg extension (skip .ico — too small)
+  const iconLinks = html.matchAll(/<link[^>]+rel=["'][^"']*\bicon\b[^"']*["'][^>]+href=["']([^"']+\.(png|svg)[^"']*)["']/gi)
+  for (const il of iconLinks) {
+    if (il[1]) return toAbsolute(il[1], base)
+  }
+
+  // 4 & 5. <img> with logo semantics — prefer within header/nav context
+  const logoImgPatterns: RegExp[] = [
+    // Inside <header> or <nav> … src … (class/id/alt has "logo")
+    /<(?:header|nav)[^>]*>[\s\S]{0,2000}?<img[^>]+(?:class|id|alt)=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
+    /<(?:header|nav)[^>]*>[\s\S]{0,2000}?<img[^>]+src=["']([^"']+)["'][^>]+(?:class|id|alt)=["'][^"']*logo[^"']*["']/gi,
+    // Anywhere — class/id contains "logo"
+    /<img[^>]+(?:class|id)=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
+    /<img[^>]+src=["']([^"']+)["'][^>]+(?:class|id)=["'][^"']*logo[^"']*["']/gi,
+    // alt attribute contains "logo"
+    /<img[^>]+alt=["'][^"']*logo[^"']*["'][^>]+src=["']([^"']+)["']/gi,
+    /<img[^>]+src=["']([^"']+)["'][^>]+alt=["'][^"']*logo[^"']*["']/gi,
+  ]
+
+  for (const pattern of logoImgPatterns) {
     pattern.lastIndex = 0
     const match = pattern.exec(html)
     if (match?.[1]) {
       const src = match[1]
-      if (src.startsWith('http')) return src
-      if (src.startsWith('//')) return `https:${src}`
-      if (src.startsWith('/')) return `${base}${src}`
+      // Skip tiny tracking pixels
+      if (src.includes('1x1') || src.includes('pixel') || src.includes('spacer')) continue
+      return toAbsolute(src, base)
     }
   }
+
   return null
 }
 
