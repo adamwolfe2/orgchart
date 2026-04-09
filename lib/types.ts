@@ -14,8 +14,15 @@ export interface Organization {
   primary_color: string
   secondary_color: string
   accent_color: string
+  brand_scraped_at: string | null
   created_at: string
   updated_at: string
+}
+
+/** A custom contact link on an employee profile. */
+export interface EmployeeCustomLink {
+  label: string
+  url: string
 }
 
 export interface Membership {
@@ -36,6 +43,9 @@ export interface Employee {
   supervisor_email: string | null
   context: string | null
   headshot_url: string | null
+  linkedin_url: string | null
+  phone: string | null
+  custom_links: EmployeeCustomLink[]
   slack_user_id: string | null
   claimed_by_user_id: string | null
   created_at: string
